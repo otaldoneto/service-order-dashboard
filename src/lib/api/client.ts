@@ -19,7 +19,10 @@ export class ApiError extends Error {
 // The API did not answer at all: it is down, unreachable or took longer than the timeout
 export class ApiUnavailableError extends Error {
   constructor(cause: unknown) {
-    super("The API is not responding. It may be waking up, try again in a minute.", { cause });
+    super(
+      "The API is not responding. It may be waking up, try again in a minute.",
+      { cause },
+    );
     this.name = "ApiUnavailableError";
   }
 }
@@ -32,6 +35,8 @@ export type ApiRequestOptions = {
   body?: unknown;
   query?: Record<string, QueryValue>;
   timeoutMs?: number;
+  // The media type the caller wants back; JSON unless stated otherwise (the PDF report asks for application/pdf)
+  accept?: string;
 };
 
 function baseUrl(): string {
@@ -42,7 +47,10 @@ function baseUrl(): string {
   return url.replace(/\/+$/, "");
 }
 
-export function buildUrl(path: string, query: Record<string, QueryValue> = {}): URL {
+export function buildUrl(
+  path: string,
+  query: Record<string, QueryValue> = {},
+): URL {
   const url = new URL(baseUrl() + path);
   for (const [key, value] of Object.entries(query)) {
     // Empty filters are left out, so the API does not filter by them
@@ -62,16 +70,22 @@ async function errorMessage(response: Response): Promise<string> {
     return `HTTP ${response.status}`;
   }
 }
-
-// Calls the API from the server and returns the parsed JSON body
-export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = { Accept: "application/json" };
+// Sends the request and turns every failure into an ApiError or an ApiUnavailableError.
+// The body is left unread, so each caller decides how to read it.
+async function send(
+  path: string,
+  options: ApiRequestOptions,
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    Accept: options.accept ?? "application/json",
+  };
   if (options.body !== undefined) {
     headers["Content-Type"] = "application/json";
   }
   if (options.token) {
     headers.Authorization = `Bearer ${options.token}`;
   }
+
   // Built outside the try: a missing API_BASE_URL is a configuration error, not an unavailable API
   const url = buildUrl(path, options.query);
 
@@ -80,7 +94,8 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     response = await fetch(url, {
       method: options.method ?? "GET",
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body:
+        options.body === undefined ? undefined : JSON.stringify(options.body),
       // Per-user data must never be cached or shared between requests
       cache: "no-store",
       signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
@@ -92,8 +107,25 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   if (!response.ok) {
     throw new ApiError(response.status, await errorMessage(response));
   }
+  return response;
+}
+
+// Calls the API from the server and returns the parsed JSON body
+export async function apiRequest<T>(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<T> {
+  const response = await send(path, options);
   if (response.status === 204) {
     return undefined as T;
   }
   return (await response.json()) as T;
+}
+
+// For binary answers such as the PDF report: returns the response unread, so its body can be passed on as is
+export function apiDownload(
+  path: string,
+  options: ApiRequestOptions,
+): Promise<Response> {
+  return send(path, options);
 }
