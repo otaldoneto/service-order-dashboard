@@ -31,3 +31,15 @@ export function priorityLabel(priority: OrderPriority): string {
 export function formatDateTime(isoDate: string): string {
   return DATE_TIME_FORMAT.format(new Date(isoDate));
 }
+
+// 11 characters are a CPF (000.000.000-00), 14 are a CNPJ (00.000.000/0000-00, digits or the new alphanumeric
+// format). Anything else is shown as it came.
+export function formatCpfOrCnpj(value: string): string {
+  if (/^\d{11}$/.test(value)) {
+    return value.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4");
+  }
+  if (/^[0-9A-Z]{12}\d{2}$/.test(value)) {
+    return value.replace(/^(.{2})(.{3})(.{3})(.{4})(.{2})$/, "$1.$2.$3/$4-$5");
+  }
+  return value;
+}
